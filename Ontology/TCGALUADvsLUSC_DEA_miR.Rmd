@@ -1,0 +1,566 @@
+---
+title: "TCGA LUAD vs LUSC DEA and ..."
+output:
+  html_document:
+    code_folding: hide
+---
+
+# Merging Datasets
+
+
+```{r, message=F, warning=F, fig.width=10,fig.height=8}
+options(rgl.useNULL = TRUE) # Suppress the separate window.
+#windowsFonts(A = windowsFont("Times New Roman"))
+# Install and load the extrafont package if not already installed
+# install.packages("extrafont")
+library(extrafont)
+
+# Load fonts from the Windows fonts directory
+##invisible(font_import(prompt = F))
+
+# Choose a font name from the imported fonts
+#chosen_font <- "Times New Roman"
+
+# Register the chosen font
+#loadfonts(device = "win")
+
+# Set the global font using par()
+#par(family = chosen_font)
+library(edgeR)
+library(ggplot2)
+library("miRBaseConverter")
+
+exp_AD = readRDS("E:\\DrMowla\\LungCancer\\LUAD\\TCGA_LUAD_miRNA2.rds")
+exp_SC = readRDS("E:\\DrMowla\\LungCancer\\LUSC\\TCGA_LUSC_miRNA.rds")
+#table(substr(colnames(exp),14,16))
+
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#  install.packages("BiocManager")
+
+#BiocManager::install("miRBaseConverter")
+
+
+rownames(exp_AD) <- miRNA_AccessionToName(rownames(exp_AD),targetVersion = "v21")$TargetName
+rownames(exp_SC) <- miRNA_AccessionToName(rownames(exp_SC),targetVersion = "v21")$TargetName
+
+cntSCC <- exp_SC[,grepl("01A",colnames(exp_SC))|grepl("01B",colnames(exp_SC))|grepl("02A",colnames(exp_SC))|grepl("01C",colnames(exp_SC))]
+cntADC <- exp_AD[,grepl("01A",colnames(exp_AD))|grepl("01B",colnames(exp_AD))]
+
+#cntADC$miRNA = rownames(cntADC)
+#cntSCC$miRNA = rownames(cntSCC)
+intersectmiRs <- intersect(rownames(cntADC),rownames(cntSCC))
+mergedcnt <- cbind(as.matrix(cntADC[intersectmiRs,]), as.matrix(cntSCC[intersectmiRs,]))
+gr <- factor(c(rep("ADC", ncol(cntADC)),rep("SCC", ncol(cntSCC))))
+
+```
+
+
+# Normalization
+
+```{r, message=F, warning=F}
+#windowsFonts(A = windowsFont("Times New Roman"))  # Specify font
+cpm_log_TCGA <- cpm(mergedcnt, log = T)
+cpm_TCGA <- cpm(mergedcnt, log = F)
+#cpm_log_TCGA <- data
+median_log2_cpm <- apply(cpm_log_TCGA, 1, median)
+hist(median_log2_cpm,breaks=40)
+expr_cutoff <- 0
+abline(v = expr_cutoff, col = "red", lwd = 3)
+### maybe quantile normalization
+
+cpm_TCGA <- cpm_TCGA[median_log2_cpm > expr_cutoff, ]
+mergedcntfiltered <- mergedcnt[median_log2_cpm > expr_cutoff, ]
+metadata_groups <- gr
+```
+
+
+# PCA 3D
+
+```{r, message=F, warning=F}
+MergedBatchRemoved_pca <- prcomp(t(cpm_TCGA))
+
+
+x <- MergedBatchRemoved_pca$x[,1]
+y <- MergedBatchRemoved_pca$x[,2]
+z <- MergedBatchRemoved_pca$x[,3]
+
+library(rgl) #
+plot3d(x, y, z,col=as.numeric((unlist(as.factor(metadata_groups)))),size = 1,type = "s")
+rglwidget()
+```
+
+# Limma DEA 
+
+```{r, message=F, warning=F}
+expression_table <- as.matrix(cpm_TCGA)
+expression_table <-  expression_table + -1.1*min(expression_table)
+expression_table <- log2(expression_table+0.001)
+library(limma)
+gset <- as.data.frame((expression_table))
+description <- factor(metadata_groups)
+description_df <- as.matrix(description)
+#gset<-gset[,description_df=='GBM'|description_df=='NormalBrain']
+#description_df <- description_df[description_df=='GBM'|description_df=='NormalBrain']
+description <-  as.factor(description_df)
+fl <- description
+design <- model.matrix(~ description + 0, gset)
+colnames(design) <- levels(fl)
+fit <- lmFit(gset, design)
+cont.matrix <- makeContrasts(SCC-ADC, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=nrow(expression_table))
+temp_show1 <- tT[1:nrow(expression_table),c(1,4,5)]
+
+temp<- format(temp_show1, digits=4, nsmall=3)
+DT::datatable(temp)
+```
+
+## Boxplot of selected miRs
+
+Ilustration top 6 selceted miR.
+
+```{r, message=F, warning=F}
+custom_boxplot_v1 <- function(idx){
+gene_symbol <- rownames(temp_show1)[order(temp_show1$logFC,decreasing = F)[idx]]
+
+control <- cpm_TCGA[gene_symbol, metadata_groups=='SCC']
+case <- cpm_TCGA[gene_symbol, metadata_groups=='ADC']
+
+data <- c(as.numeric(control),as.numeric(case))
+labels <- (c(rep("SCC",length(control)),rep("ADC",length(case))))
+ggplot2mergeddataframe <- data.frame(data,labels)
+library(ggplot2)
+#qplot( x=labels , y=data , data=ggplot2mergeddataframe , geom=c("boxplot","jitter") , fill=labels)
+
+p <- ggplot(ggplot2mergeddataframe, aes(labels, data)) + ylim(0,1.05*max(ggplot2mergeddataframe$data))
+
+p <- p + geom_boxplot(outlier.size=-1)+ stat_summary(fun.y=mean, geom="point", shape=20, size=10, color="red", fill="red")  + geom_jitter(width = 0.2)+ggtitle(paste(c("Expression of ", gene_symbol),collapse="")) + labs(y="Level of Exp",x="Significant miRs in Merged TCGA") + theme_bw() +
+  theme(text=element_text( face="bold", size=12)) #Times New Roman, 12pt, Bold family="Times New Roman",
+return (p)
+}
+
+#plot_list <- list()
+plot_list <- lapply(seq(1,6,1),function(x) custom_boxplot_v1(x))
+
+library(gridExtra)
+```
+```{r, message=F, warning=F, fig.width=10,fig.height=12}
+windowsFonts(A = windowsFont("Times New Roman"))
+do.call("grid.arrange", c(plot_list, ncol=2))
+```
+
+
+Ilustration top 6 selceted miR.
+
+```{r, message=F, warning=F}
+custom_boxplot_v1 <- function(idx){
+gene_symbol <- rownames(temp_show1)[order(temp_show1$logFC,decreasing = T)[idx]]
+
+control <- cpm_TCGA[gene_symbol, metadata_groups=='SCC']
+case <- cpm_TCGA[gene_symbol, metadata_groups=='ADC']
+
+data <- c(as.numeric(control),as.numeric(case))
+labels <- (c(rep("SCC",length(control)),rep("ADC",length(case))))
+ggplot2mergeddataframe <- data.frame(data,labels)
+library(ggplot2)
+#qplot( x=labels , y=data , data=ggplot2mergeddataframe , geom=c("boxplot","jitter") , fill=labels)
+
+p <- ggplot(ggplot2mergeddataframe, aes(labels, data)) + ylim(0,1.05*max(ggplot2mergeddataframe$data))
+
+p <- p + geom_boxplot(outlier.size=-1)+ stat_summary(fun.y=mean, geom="point", shape=20, size=10, color="red", fill="red")  + geom_jitter(width = 0.2)+ggtitle(paste(c("Expression of ", gene_symbol),collapse="")) + labs(y="Level of Exp",x="Significant miRs in Merged TCGA") + theme_bw()+
+  theme(text=element_text(face="bold", size=12)) #Times New Roman, 12pt, Bold family="Times New Roman",
+
+return (p)
+}
+
+#plot_list <- list()
+plot_list <- lapply(seq(1,6,1),function(x) custom_boxplot_v1(x))
+
+library(gridExtra)
+```
+```{r, message=F, warning=F, fig.width=10,fig.height=12}
+do.call("grid.arrange", c(plot_list, ncol=2))
+```
+
+## Barplot
+
+```{r, fig.width=8,fig.height=14}
+temp_showDF <- temp_show1
+temp_showDF <- temp_showDF[order(temp_showDF$logFC), ]
+miRBarPlotDF <- data.frame(miR = rownames(temp_showDF), LogFC = temp_showDF$logFC, AdjustedPvalue = temp_showDF$adj.P.Val)
+NumofSelected <- 6
+miRBarPlotDF <- miRBarPlotDF[c(1:NumofSelected, (nrow(miRBarPlotDF)-NumofSelected+1):nrow(miRBarPlotDF)),]
+miRBarPlotDF$LogFC <- as.numeric(miRBarPlotDF$LogFC)
+miRBarPlotDF$AdjustedPvalue <- -log10(as.numeric(miRBarPlotDF$AdjustedPvalue))
+positions <- miRBarPlotDF$miR
+library(ggplot2)
+ggplot(miRBarPlotDF, aes(x=miR, y=LogFC, fill=AdjustedPvalue)) + ylim(-10,10) +
+  geom_bar(stat="identity") +
+  scale_fill_gradient(low="red", high="blue", limits = c(0, 250)) +
+  scale_x_discrete(limits = positions) +
+  coord_flip() +
+  labs(title=expression(paste("",Log[2],"FC and -", Log[10], "Adjusted p-value")),# "LogFC and Adj. P-Value Barplot",
+       y=expression(paste("",Log[2],"FC")), 
+       fill=expression(paste("-",Log[10],"adjusted p-value") ))+
+  theme_bw()+
+theme(axis.title=element_text(size=20,face="bold"),
+axis.text= element_text(size = 20,face="bold",color="black"),
+ plot.title = element_text(size = 15,face="bold"),
+text=element_text(face="bold", size=12))#family="Times New Roman",
+
+```
+
+
+
+```{r, fig.width=8,fig.height=13}
+ggplot(miRBarPlotDF, aes(x=miR, y=LogFC, fill=LogFC)) + ylim(-10,10) +
+  geom_bar(stat="identity") +
+  scale_fill_gradient(low="blue", high="red", limits = c(-10, 10)) +
+  scale_x_discrete(limits = positions) +
+  coord_flip() +
+  labs(title=expression(paste("",Log[2],"FC Barplot")),
+       y=expression(paste("",Log[2],"FC")),
+       fill=expression(paste("",Log[2],"FC")))+
+  theme_bw()+
+theme(axis.title=element_text(size=20,face="bold"),
+axis.text= element_text(size = 20,face="bold",color="black"),
+ plot.title = element_text(size = 15,face="bold"),
+text=element_text(face="bold", size=12))#family="Times New Roman",
+```
+
+```{r, fig.width=8,fig.height=13}
+ggplot(miRBarPlotDF, aes(x=miR, y=AdjustedPvalue, fill=AdjustedPvalue)) + ylim(0, 250) +
+  geom_bar(stat="identity") +
+  scale_fill_gradient(low="blue", high="red", limits = c(0, 250)) +
+  scale_x_discrete(limits = positions) +
+  coord_flip() +
+  labs(title=expression(paste("-",Log[10],"adjusted p-value Barplot")),
+       y=expression(paste("-",Log[10],"adjusted p-value")),
+       fill=expression(paste("-",Log[10],"adjusted p-value")))+
+  theme_bw()+
+theme(axis.title=element_text(size=20,face="bold"),
+axis.text= element_text(size = 20,face="bold",color="black"),
+ plot.title = element_text(size = 15,face="bold"),
+text=element_text(face="bold", size=12))#family="Times New Roman",
+```
+
+	   
+## Volcano Plot
+
+
+```{r, fig.width=10,fig.height=8}
+gm_mean = function(x, na.rm=TRUE){
+    exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+#expression_table <- as.matrix(MergedBatchRemoved)
+MergedBatchRemoved <- expression_table
+#expression_table <-  expression_table + -1.1*min(expression_table)
+#log2(sapply(seq(1,nrow(expression_table),1),function(x)gm_mean(expression_table[x,metadata_groups=="GBM"]))/sapply(seq(1,nrow(expression_table),1),function(x) gm_mean(expression_table[x,metadata_groups=="NormalBrain"])))
+df <- data.frame(log2FC = ((temp_show1[rownames(MergedBatchRemoved),])$logFC),
+                 logpv = ((temp_show1[rownames(MergedBatchRemoved),])$adj.P.Val))
+
+rownames(df) <- rownames(MergedBatchRemoved)
+
+library(EnhancedVolcano)
+EVolc <- EnhancedVolcano(df,
+                lab = rownames(df),
+                x = 'log2FC',
+                y = 'logpv',
+                xlim = c(-4, 9),
+                ylim = c(0, 250),
+                title = 'TCGA Lung Cancer',
+                pCutoff = 0.001,
+                FCcutoff = 2)
+
+EVolc + theme(text=element_text(face="bold", size=12))#family="Times New Roman",
+```
+```{r, message=F, warning=F, fig.width=10,fig.height=8}
+library("ggplot2") #Best plots
+library("ggrepel") #Avoid overlapping labels
+library("dplyr")
+##https://www.biostars.org/p/203876/
+mutateddf <- mutate(df, sig=ifelse((df$logpv<0.001)&(abs(df$log2FC)>2), "padj<0.001 & abs(log2FC)>2", "Not Sig")) #Will have different colors depending on significance
+
+rownames(mutateddf) <- rownames(df)
+
+input <- cbind(gene=rownames(mutateddf ), mutateddf ) #convert the rownames to a column
+volc = ggplot(input, aes(log2FC, -log10(logpv))) + #volcanoplot with log2Foldchange versus pvalue
+    geom_point(aes(col=sig)) + #add points colored by significance
+    scale_color_manual(values=c("black", "red")) + 
+    ggtitle("Volcanoplot Lung Cancer TCGA") +#e.g. 'Volcanoplot DESeq2' +
+    xlim(-4,9)+
+    ylim(0,250)+
+    theme_bw()
+volc+geom_text_repel(data=(input[input$sig=="padj<0.001 & abs(log2FC)>2",]), aes(label=gene))  + theme(text=element_text(face="bold", size=12))#adding text for the top 20 genes family="Times New Roman",
+```
+
+```{r, message=F, warning=F, fig.width=10,fig.height=8}
+library("ggplot2") #Best plots
+library("ggrepel") #Avoid overlapping labels
+library("dplyr")
+##https://www.biostars.org/p/203876/
+mutateddf <- mutate(df, Significancy=ifelse((df$logpv<0.001)&(abs(df$log2FC)>2), "Adjusted p-value<0.001 & |log2FC|>2", "Not Significant")) #Will have different colors depending on significance
+
+rownames(mutateddf) <- rownames(df)
+
+input <- cbind(gene=rownames(mutateddf ), mutateddf ) #convert the rownames to a column
+volc = ggplot(input, aes(log2FC, -log10(logpv))) + #volcanoplot with log2Foldchange versus pvalue
+    geom_point(aes(col=Significancy)) + #add points colored by significance
+    scale_color_manual(values=c("black", "red")) + 
+    ggtitle("Volcanoplot Lung Cancer TCGA") +#e.g. 'Volcanoplot DESeq2' +
+    xlim(-4,9)+
+    ylim(0,250)+ labs(x = expression(paste("",Log[2],"FC")),
+                      y = expression(paste("",Log[10],"adjusted p-value")),
+                      col = "") +
+    theme_bw()
+volc+geom_text_repel(data=(input[input$Significancy=="Adjusted p-value<0.001 & |log2FC|>2",]), aes(label=gene))  + theme(text=element_text(face="bold", size=12))#adding text for the top 20 genes family="Times New Roman",
+```
+
+## Heatmap
+
+```{r, message=F, warning=F, fig.width=12,fig.height=20}
+library(circlize)
+library(ComplexHeatmap)
+
+gene_list <- c(rownames(temp_show1)[order(temp_show1$logFC,decreasing = T)[1:6]],rownames(temp_show1)[order(temp_show1$logFC,decreasing = F)[1:6]])
+
+expression_table_norm <- (expression_table[gene_list,])
+#Scale
+expression_table_norm <-as.matrix(expression_table_norm )
+expression_table_norm<-scale(expression_table_norm ,center = TRUE)
+expression_table_norm<-t(expression_table_norm)
+expression_table_norm<-scale(expression_table_norm,center = TRUE)
+expression_table_norm<-t(expression_table_norm)
+RNAStatsummary <- summary(as.numeric(expression_table_norm))
+
+#Color
+col_rnorm <- colorRamp2(c(floor(RNAStatsummary[1]), 0, ceiling(RNAStatsummary[6])), c("blue", "white", "red"))
+
+
+#pushViewport(viewport(gp = gpar(fontfamily = "Times New Roman")))#family="Times New Roman",
+#Heatmap
+column_ha <-HeatmapAnnotation(annotation_name_side = "left",
+                              Group=as.factor(metadata_groups),
+                              col=list(Group=c("ADC"="red","SCC"="blue")))
+
+
+ht <-Heatmap(expression_table_norm,name="Expression", 
+             show_row_names = TRUE, 
+             show_column_names = FALSE,
+             column_names_centered = TRUE, 
+             col=col_rnorm, 
+             column_names_gp = gpar(fontsize=3),
+             row_names_gp = grid::gpar(fontsize =10),
+             row_gap = unit(1, "mm"),
+             column_gap = unit(2, "mm"), 
+             row_names_side = "right",
+             top_annotation = column_ha ,
+             column_dend_side = "bottom",
+             row_dend_reorder = FALSE,
+             border = TRUE,
+             height = unit(12,"cm"),
+             width = unit(20,"cm"),
+             na_col = "grey",
+             cluster_rows= FALSE,
+             cluster_columns = FALSE,
+             column_split = as.factor(metadata_groups))
+
+draw(ht,heatmap_legend_side="left",annotation_legend_side="left", newpage = FALSE)
+#popViewport()
+```
+
+
+## find genes based on target scan or correllation in TCGA
+
+```{r, message=F, warning=F, echo=F}
+library(pbapply)
+TCGALUSC <- readRDS("E:/DrMowla/TCGALUSC.rds")
+TCGALUAD <- readRDS("E:/DrMowla/TCGALUAD.rds")
+
+## remove adjnormal samples
+adj_normal_idx <- matrix(0,nrow =ncol(TCGALUSC$FPKM) ,ncol=1);
+adj_normal_idx[grepl("11A",TCGALUSC$Clinical$id)|grepl("11B",TCGALUSC$Clinical$id)] <- 1
+TCGALUSCTumorFPKM <- TCGALUSC$FPKM[,which(adj_normal_idx==0)]
+
+adj_normal_idx <- matrix(0,nrow =ncol(TCGALUAD$FPKM) ,ncol=1);
+adj_normal_idx[grepl("11A",TCGALUAD$Clinical$id)|grepl("11B",TCGALUAD$Clinical$id)] <- 1
+TCGALUADTumorFPKM <- TCGALUAD$FPKM[,which(adj_normal_idx==0)]
+
+## make same sample names
+colnames(exp_AD) <-  substr(colnames(exp_AD),1,16)
+adj_normal_idx <- matrix(0,nrow =ncol(exp_AD) ,ncol=1);
+adj_normal_idx[grepl("11A",colnames(exp_AD))|grepl("11B",colnames(exp_AD))] <- 1
+exp_ADTumor <- exp_AD[,which(adj_normal_idx==0)]
+exp_ADTumorCPM <- cpm(exp_ADTumor)
+
+
+colnames(exp_SC) <-  substr(colnames(exp_SC),1,16)
+adj_normal_idx <- matrix(0,nrow =ncol(exp_SC) ,ncol=1);
+adj_normal_idx[grepl("11A",colnames(exp_SC))|grepl("11B",colnames(exp_SC))] <- 1
+exp_SCTumor <- exp_SC[,which(adj_normal_idx==0)]
+exp_SCTumorCPM <- cpm(exp_SCTumor)
+
+
+LUADintersectSample <- intersect(colnames(TCGALUADTumorFPKM), colnames(exp_ADTumorCPM))
+LUSCintersectSample <- intersect(colnames(TCGALUSCTumorFPKM), colnames(exp_SCTumorCPM))
+
+miRintersect <- intersect(rownames(exp_ADTumorCPM), rownames(exp_SCTumorCPM))
+
+TCGAAllTumorFPKM <- cbind(TCGALUADTumorFPKM[,LUADintersectSample],TCGALUSCTumorFPKM[,LUSCintersectSample])
+TCGAAllTumorCPM <- cbind(exp_ADTumorCPM[miRintersect, LUADintersectSample],exp_SCTumorCPM[miRintersect, LUSCintersectSample])
+
+TCGAAllTumorFPKMSD <- pbsapply(seq(1, nrow(TCGAAllTumorFPKM),1), function(x){sd(as.numeric(TCGAAllTumorFPKM[x,]))})
+TCGAAllTumorCPMSD <- pbsapply(seq(1, nrow(TCGAAllTumorCPM),1), function(x){sd(as.numeric(TCGAAllTumorCPM[x,]))})
+
+TCGAAllTumorFPKM <- TCGAAllTumorFPKM[TCGAAllTumorFPKMSD!=0,]
+TCGAAllTumorCPM <- TCGAAllTumorCPM[TCGAAllTumorCPMSD!=0,]
+```
+
+
+```{r, message=F, warning=F}
+library(AnnotationDbi)
+TargetsWthiHighlyNegCorrName <- function(CurrmiRName, TCGAAllTumorFPKM, TCGAAllTumorCPM){
+##find targets
+#CurrmiRName <- "hsa-miR-205-5p"
+print("CurrmiRName: ")
+print(CurrmiRName)
+##find the correlation
+library(multiMiR)
+
+# Plug miRNA's into multiMiR and getting validated targets
+multimir_results <- invisible(get_multimir(org     = 'hsa',
+                                 mirna   = CurrmiRName,
+                                 table   = 'validated',
+                                 summary = TRUE))
+
+
+CurrTargets <- multimir_results@data[multimir_results@data$database=="mirtarbase" & multimir_results@data$support_type=="Functional MTI",]$target_ensembl
+
+if(length(CurrTargets)!=0){
+#targetsensembidtmp <- na.omit(mapIds(org.Hs.eg.db, keys = CurrTargets, keytype ="SYMBOL", column="ENSEMBL",multiVals = "first"))
+#targetsensembidtmp <- AnnotationDbi::select(org.Hs.eg.db, keys= CurrTargets,   
+#    columns=c("SYMBOL","ENSEMBL"), keytype="ENSEMBL",multiVals = "first")
+library(pbapply)
+rettmp <- sapply(CurrTargets, function(y){if(sum(is.na(as.numeric(TCGAAllTumorFPKM[y,])))>0)return(NA);tmp <- cor.test(as.numeric(TCGAAllTumorFPKM[y,]), as.numeric(TCGAAllTumorCPM[CurrmiRName,]));if(tmp$estimate>0){return(1);}else{return(tmp$p.value)}})
+return(rettmp)
+}else{
+return(NA)
+}
+}
+
+
+TargetsWthiHighlyNegCorrNameTS <- function(CurrmiRName, TCGAAllTumorFPKM, TCGAAllTumorCPM){
+##find targets
+#CurrmiRIdx <- 1
+#print("CurrmiRName: ")
+#print(CurrmiRName)
+##find the correlation
+library(hoardeR)
+CurrTargets <- targetScan(mirna=CurrmiRName, species="Human", maxOut=100)
+if(nrow(CurrTargets)!=0){
+library("org.Hs.eg.db") # remember to install it if you don't have it already
+targetsensembidtmp <- na.omit(mapIds(org.Hs.eg.db, keys = CurrTargets$Ortholog, keytype ="SYMBOL", column="ENSEMBL",multiVals = "first"))
+
+library(pbapply)
+rettmp <- sapply(targetsensembidtmp, function(y){if(sum(is.na(as.numeric(TCGAAllTumorFPKM[y,])))>0)return(NA);tmp <- cor.test(as.numeric(TCGAAllTumorFPKM[y,]), as.numeric(TCGAAllTumorCPM[CurrmiRName,]));if(tmp$estimate>0){return(1);}else{return(tmp$p.value)}})
+return(rettmp)
+}else{
+return(NA)
+}
+}
+
+
+
+NumofSelectedmiRs <- 25
+SelectedmiRs <- rownames(temp_show1[abs(temp_show1$logFC)>2,])[1:NumofSelectedmiRs]
+#SelectedmiRs <- SelectedmiRs[-1*c(1,2,3)]
+#miRTargetList <- pblapply(seq(1, nrow(TCGAAllTumorCPM),1),function(x)return(TargetsWthiHighlyNegCorr(x,TCGAAllTumorFPKM,TCGAAllTumorCPM)))
+miRTargetList <- pblapply(SelectedmiRs,function(x)return(TargetsWthiHighlyNegCorrName(x,TCGAAllTumorFPKM,TCGAAllTumorCPM)))
+```
+
+# Pathway analysis
+
+## Target Genes
+
+```{r, message=F, warning=F}
+library(AnnotationDbi)
+library("org.Hs.eg.db") # remember to install it if you don't have it already
+
+tmp <- unlist(miRTargetList)
+tmp1 <- na.omit(tmp)
+tmp <- tmp1[as.numeric(tmp1) < 1.0e-4]
+
+TargetGeneDataFrame <- function(x){
+CurrGenes <- miRTargetList[[x]]
+if(length(CurrGenes)>1){
+CurrDataFrame <- data.frame(miR=rep(SelectedmiRs[x],length(CurrGenes)), FunctionalTarget=names(CurrGenes), NegCorrPval=CurrGenes)
+return(CurrDataFrame)
+}else{
+return(NA)
+}
+}
+
+TargetGeneDataFrameList <- pblapply(seq(1, length(SelectedmiRs),1), function(x){TargetGeneDataFrame(x)})
+TargetGeneDataFrameDF <- do.call(rbind, TargetGeneDataFrameList)
+TargetGeneDataFrameDFClean <- na.omit(TargetGeneDataFrameDF)
+
+#TargetGeneDataFrameDFClean <- TargetGeneDataFrameDFClean[-1*which(TargetGeneDataFrameDFClean$FunctionalTarget==""),]
+TargetGeneDataFrameDFClean$Symbol <- unlist(mapIds(org.Hs.eg.db, keys = TargetGeneDataFrameDFClean$FunctionalTarget, keytype ="ENSEMBL", column="SYMBOL",multiVals = "first"))
+
+  
+DT::datatable(TargetGeneDataFrameDFClean)
+
+##source: https://bioconductor.statistik.tu-dortmund.de/packages/3.8/bioc/vignettes/enrichplot/inst/doc/enrichplot.html
+library(DOSE)
+library(org.Hs.eg.db)
+GeneListENTREZID <- AnnotationDbi::select(org.Hs.eg.db, keys= names(tmp),   
+    columns=c("ENTREZID","ENSEMBL"), keytype="ENSEMBL")
+
+GeneListENTREZID <- na.omit(GeneListENTREZID)
+de <- GeneListENTREZID$ENTREZID
+edo <- enrichDGN(de) ##edo@result
+```
+
+## Pathway barplot
+
+## Pathway enrichplot
+
+```{r, message=F, warning=F, fig.width=12,fig.height=15}
+library(enrichplot)
+p1 <- dotplot(edo, showCategory=30) + ggtitle("LUAD vs LUSC miR targets")
+p1
+```
+
+
+## Pathway cnetplot
+
+```{r, message=F, warning=F, fig.width=12,fig.height=15}
+## convert gene ID to Symbol
+edox <- setReadable(edo, 'org.Hs.eg.db', 'ENTREZID')
+cnetplot(edox)
+```
+
+## Pathway upsetplot
+
+```{r, message=F, warning=F, fig.width=12,fig.height=15}
+upsetplot(edo)
+```
+
+## Pathway heatplot
+
+```{r, message=F, warning=F, fig.width=12,fig.height=15}
+heatplot(edox)
+```
+
+## Pathway emapplot
+
+```{r, message=F, warning=F, fig.width=12,fig.height=15}
+x2 <- pairwise_termsim(edo)
+emapplot(x2)
+```
+
+
+##Custom pathways
+
+##Plots
