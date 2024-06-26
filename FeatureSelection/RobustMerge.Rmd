@@ -1,0 +1,173 @@
+---
+title: "Robust Merging of Different Classifier in ADC vs SCC"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r, message=F, warning=F}
+SelectFeaturesRes_svm <- readRDS(file = "D:\\Drmowla\\LungCancer\\FeatureSelection\\SelectFeaturesRes_svm_v6_100_3_v1.Rds")
+SelectFeaturesRes_rpart <- readRDS(file = "D:\\Drmowla\\LungCancer\\FeatureSelection\\SelectFeaturesRes_rpart_v6_100_3_v1.Rds")
+SelectFeaturesRes_nbayes <- readRDS(file = "D:\\Drmowla\\LungCancer\\FeatureSelection\\SelectFeaturesRes_naiveBayes_v6_100_3_v1.Rds")
+```
+
+## SVM (1)
+
+```{r, message=F, warning=F}
+DT::datatable(data.frame(Accuracy=SelectFeaturesRes_svm$`Set 1`))
+```
+
+## naiveBayes (1)
+
+```{r, message=F, warning=F}
+DT::datatable(data.frame(Accuracy=SelectFeaturesRes_nbayes$`Set 1`))
+```
+
+## rpart (1)
+
+```{r, message=F, warning=F}
+DT::datatable(data.frame(Accuracy=SelectFeaturesRes_rpart$`Set 1`))
+```
+
+
+## SVM (2)
+
+```{r, message=F, warning=F}
+DT::datatable(data.frame(Accuracy=SelectFeaturesRes_svm$`Set 2`[1:10000]))
+```
+
+## rpart (2)
+
+```{r, message=F, warning=F}
+DT::datatable(data.frame(Accuracy=SelectFeaturesRes_rpart$`Set 2`[1:10000]))
+```
+
+## naiveBayes (2)
+
+```{r, message=F, warning=F}
+DT::datatable(data.frame(Accuracy=SelectFeaturesRes_nbayes$`Set 2`[1:10000]))
+```
+
+## SVM (3)
+
+```{r, message=F, warning=F}
+DT::datatable(data.frame(Accuracy=SelectFeaturesRes_svm$`Set 3`[1:10000]))
+```
+
+## rpart (3)
+
+```{r, message=F, warning=F}
+DT::datatable(data.frame(Accuracy=SelectFeaturesRes_rpart$`Set 3`[1:10000]))
+```
+
+
+## naiveBayes (3)
+
+```{r, message=F, warning=F}
+DT::datatable(data.frame(Accuracy=SelectFeaturesRes_nbayes$`Set 3`[1:10000]))
+```
+
+
+## Robust Merged (1)
+
+```{r, message=F, warning=F}
+library(RobustRankAggreg)
+glist <- list(svm_1 = names(SelectFeaturesRes_svm$`Set 1`),rpart = names(SelectFeaturesRes_rpart$`Set 1`) , nbayes = names(SelectFeaturesRes_nbayes$`Set 1`))
+# Aggregate the inputs
+aggregated_Ranks <- aggregateRanks(glist = glist, N = 10000, method='stuart')
+
+
+
+aggregate_table <- matrix(nrow = nrow(aggregated_Ranks), ncol=4)
+rownames(aggregate_table) <- aggregated_Ranks$Name
+
+ttemp1_seq <- seq(1,length(names(SelectFeaturesRes_svm$`Set 1`)))
+ttemp1 <- ttemp1_seq[as.numeric(as.character(sapply(rownames(aggregate_table), function(x) which(names(SelectFeaturesRes_svm$`Set 1`)==x))))]
+
+ttemp1_seq <- seq(1,length(names(SelectFeaturesRes_rpart$`Set 1`)))
+ttemp2 <- ttemp1_seq[as.numeric(as.character(sapply(rownames(aggregate_table), function(x) which(names(SelectFeaturesRes_rpart$`Set 1`)==x))))]
+
+ttemp1_seq <- seq(1,length(names(SelectFeaturesRes_nbayes$`Set 1`)))
+ttemp3 <- ttemp1_seq[as.numeric(as.character(sapply(rownames(aggregate_table), function(x) which(names(SelectFeaturesRes_nbayes$`Set 1`)==x))))]
+
+aggregate_table[,1]<- aggregated_Ranks$Score
+aggregate_table[,2]<- ttemp1
+aggregate_table[,3]<- ttemp2
+aggregate_table[,4]<- ttemp3
+
+colnames(aggregate_table) <- c("aggregate score","SVM","rpart","NaiveBayes")
+
+DT::datatable(aggregate_table[1:2000,])
+```
+
+## Robust Merged (2)
+
+```{r, message=F, warning=F}
+
+SelectFeaturesRes_svm <- names(SelectFeaturesRes_svm$`Set 2`)[1:10000]
+SelectFeaturesRes_rpart <- names(SelectFeaturesRes_rpart$`Set 2`)[1:10000]
+SelectFeaturesRes_nbayes <- names(SelectFeaturesRes_nbayes$`Set 2`)[1:10000]
+
+library(RobustRankAggreg)
+glist <- list(svm_1 = SelectFeaturesRes_svm,rpart = SelectFeaturesRes_rpart , nbayes = SelectFeaturesRes_nbayes)
+# Aggregate the inputs
+aggregated_Ranks <- aggregateRanks(glist = glist, N = 1000, method='stuart')
+
+aggregate_table <- matrix(nrow = nrow(aggregated_Ranks), ncol=4)
+rownames(aggregate_table) <- aggregated_Ranks$Name
+
+ttemp1_seq <- seq(1,length(SelectFeaturesRes_svm))
+ttemp1 <- ttemp1_seq[as.numeric(as.character(sapply(rownames(aggregate_table), function(x) which(SelectFeaturesRes_svm==x))))]
+
+ttemp1_seq <- seq(1,length(SelectFeaturesRes_rpart))
+ttemp2 <- ttemp1_seq[as.numeric(as.character(sapply(rownames(aggregate_table), function(x) which(SelectFeaturesRes_rpart==x))))]
+
+ttemp1_seq <- seq(1,length(SelectFeaturesRes_nbayes))
+ttemp3 <- ttemp1_seq[as.numeric(as.character(sapply(rownames(aggregate_table), function(x) which(SelectFeaturesRes_nbayes==x))))]
+
+aggregate_table[,1]<- aggregated_Ranks$Score
+aggregate_table[,2]<- ttemp1
+aggregate_table[,3]<- ttemp2
+aggregate_table[,4]<- ttemp3
+
+colnames(aggregate_table) <- c("aggregate score","SVM","rpart","NaiveBayes")
+
+DT::datatable(aggregate_table[1:5000,])
+```
+
+## Robust Merged (3)
+
+```{r, message=F, warning=F}
+SelectFeaturesRes_svm <- readRDS(file = "D:\\Drmowla\\LungCancer\\FeatureSelection\\SelectFeaturesRes_svm_v6_100_3_v1.Rds")
+SelectFeaturesRes_rpart <- readRDS(file = "D:\\Drmowla\\LungCancer\\FeatureSelection\\SelectFeaturesRes_rpart_v6_100_3_v1.Rds")
+SelectFeaturesRes_nbayes <- readRDS(file = "D:\\Drmowla\\LungCancer\\FeatureSelection\\SelectFeaturesRes_naiveBayes_v6_100_3_v1.Rds")
+SelectFeaturesRes_svm <- names(SelectFeaturesRes_svm$`Set 3`)[1:10000]
+SelectFeaturesRes_rpart <- names(SelectFeaturesRes_rpart$`Set 3`)[1:10000]
+SelectFeaturesRes_nbayes <- names(SelectFeaturesRes_nbayes$`Set 3`)[1:10000]
+
+library(RobustRankAggreg)
+glist <- list(svm_1 = SelectFeaturesRes_svm,rpart = SelectFeaturesRes_rpart , nbayes = SelectFeaturesRes_nbayes)
+# Aggregate the inputs
+aggregated_Ranks <- aggregateRanks(glist = glist, N = 1000, method='stuart')
+
+aggregate_table <- matrix(nrow = nrow(aggregated_Ranks), ncol=4)
+rownames(aggregate_table) <- aggregated_Ranks$Name
+
+ttemp1_seq <- seq(1,length(SelectFeaturesRes_svm))
+ttemp1 <- ttemp1_seq[as.numeric(as.character(sapply(rownames(aggregate_table), function(x) which(SelectFeaturesRes_svm==x))))]
+
+ttemp1_seq <- seq(1,length(SelectFeaturesRes_rpart))
+ttemp2 <- ttemp1_seq[as.numeric(as.character(sapply(rownames(aggregate_table), function(x) which(SelectFeaturesRes_rpart==x))))]
+
+ttemp1_seq <- seq(1,length(SelectFeaturesRes_nbayes))
+ttemp3 <- ttemp1_seq[as.numeric(as.character(sapply(rownames(aggregate_table), function(x) which(SelectFeaturesRes_nbayes==x))))]
+
+aggregate_table[,1]<- aggregated_Ranks$Score
+aggregate_table[,2]<- ttemp1
+aggregate_table[,3]<- ttemp2
+aggregate_table[,4]<- ttemp3
+
+colnames(aggregate_table) <- c("aggregate score","SVM","rpart","NaiveBayes")
+
+DT::datatable(aggregate_table[1:5000,])
+```
